@@ -1,0 +1,58 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Property {
+  id            String   @id
+  title         String
+  link          String
+  totalPrice    Decimal  @map("total_price") @db.Decimal(15, 2)
+  surface       Decimal  @db.Decimal(10, 2)
+  pricePerM2    Decimal  @map("price_per_m2") @db.Decimal(15, 2)
+  source        String
+  neighborhood  String
+  isOwner       Boolean  @map("is_owner") @default(false)
+  publishedDate DateTime @map("published_date") @db.Timestamptz
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@map("properties")
+}
+
+model ScheduledSearch {
+  id              String    @id
+  email           String
+  scheduleTime    String    @map("schedule_time")
+  neighborhoods   String[]
+  ownerOnly       Boolean   @map("owner_only") @default(false)
+  timeRange       String    @map("time_range")
+  customStartDate DateTime? @map("custom_start_date") @db.Date
+  customEndDate   DateTime? @map("custom_end_date") @db.Date
+  maxPricePerM2   Decimal?  @map("max_price_per_m2") @db.Decimal(15, 2)
+  isActive        Boolean   @map("is_active") @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@map("scheduled_searches")
+}
+
+model ScrapingJob {
+  id          String    @id
+  status      String    @default("pending")
+  criteria    Json
+  result      Json?
+  error       String?
+  startedAt   DateTime? @map("started_at") @db.Timestamptz
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("scraping_jobs")
+}

@@ -1,0 +1,31 @@
+# Dockerfile para el worker de scraping
+FROM node:18-alpine
+
+# Instalar Chromium y dependencias necesarias para Puppeteer
+RUN apk add --no-cache \
+      chromium \
+      nss \
+      freetype \
+      harfbuzz \
+      ca-certificates \
+      ttf-freefont \
+      nodejs \
+      yarn
+
+# Configurar variables de entorno para Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+WORKDIR /app
+
+# Copiar archivos de la aplicación
+COPY package.json package-lock.json* ./
+COPY server/worker ./worker
+COPY lib ./lib
+COPY prisma ./prisma
+
+# Instalar dependencias
+RUN npm ci
+
+# Comando para iniciar el worker
+CMD ["node", "worker/index.js"]
