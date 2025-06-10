@@ -1,8 +1,27 @@
 import { NextResponse } from "next/server"
-import { supabaseAdmin } from "@/lib/supabase"
+import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase"
 
 export async function GET() {
   try {
+    // Check if Supabase is configured
+    if (!isSupabaseConfigured() || !supabaseAdmin) {
+      // Return mock data if Supabase is not configured
+      return NextResponse.json({
+        stats: {
+          totalJobs: 0,
+          completedJobs: 0,
+          failedJobs: 0,
+          pendingJobs: 0,
+          processingJobs: 0,
+          totalProperties: 0,
+          successRate: 0,
+        },
+        status: "not_configured",
+        timestamp: new Date().toISOString(),
+        message: "Supabase not configured",
+      })
+    }
+
     // Obtener estadísticas de trabajos de scraping
     const { data: jobs, error } = await supabaseAdmin
       .from("scraping_jobs")
@@ -39,6 +58,21 @@ export async function GET() {
     })
   } catch (error) {
     console.error("Error getting scraping status:", error)
-    return NextResponse.json({ error: "Failed to get scraping status" }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: "Failed to get scraping status",
+        stats: {
+          totalJobs: 0,
+          completedJobs: 0,
+          failedJobs: 0,
+          pendingJobs: 0,
+          processingJobs: 0,
+          totalProperties: 0,
+          successRate: 0,
+        },
+        status: "error",
+      },
+      { status: 500 },
+    )
   }
 }

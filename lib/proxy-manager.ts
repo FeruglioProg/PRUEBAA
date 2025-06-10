@@ -36,7 +36,12 @@ class ProxyManager {
       console.log("✅ Proxy manager initialized with Bright Data config")
     } else {
       console.warn("⚠️ Proxy configuration incomplete. Some environment variables are missing.")
+      // Don't throw an error, just continue without proxy
     }
+  }
+
+  isConfigured(): boolean {
+    return this.proxyConfig !== null
   }
 
   getBrightDataProxy(): ProxyConfig | null {

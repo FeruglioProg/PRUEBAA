@@ -922,3 +922,6 @@ function applyRealFilters(properties: Property[], criteria: any): Property[] {
 
   return uniqueProperties
 }
+
+// Add this export at the end of the file
+export { scrapePropertiesRealTimeSimple as realTimeScraperSimple }

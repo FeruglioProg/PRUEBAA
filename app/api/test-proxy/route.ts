@@ -6,6 +6,24 @@ export async function GET() {
   try {
     console.log("🧪 Testing Bright Data proxy...")
 
+    // Check if proxy is configured
+    if (!proxyManager.isConfigured()) {
+      return NextResponse.json({
+        success: false,
+        message: "Proxy not configured",
+        directProxyTest: {
+          success: false,
+        },
+        browserTest: {
+          success: false,
+          userAgent: "Not available",
+          testUrl: "Not available",
+        },
+        brightDataProxy: null,
+        timestamp: new Date().toISOString(),
+      })
+    }
+
     // Test directo del proxy
     const proxyTestResult = await proxyManager.testBrightDataProxy()
 

@@ -4,27 +4,29 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Wifi, WifiOff, RefreshCw, CheckCircle, XCircle } from "lucide-react"
+import { Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, AlertTriangle } from "lucide-react"
 
 interface ProxyTestResult {
   success: boolean
-  tests: {
+  tests?: {
     directProxy: { success: boolean; description: string }
     browserProxy: { success: boolean; description: string }
   }
-  proxyInfo: {
+  proxyInfo?: {
     host: string
     port: number
     username: string
     protocol: string
   }
-  recommendations: string[]
+  recommendations?: string[]
+  message?: string
 }
 
 export function ProxyStatus() {
   const [status, setStatus] = useState<ProxyTestResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [lastTest, setLastTest] = useState<Date | null>(null)
+  const [configured, setConfigured] = useState(true)
 
   const testProxy = async () => {
     setLoading(true)
@@ -35,6 +37,7 @@ export function ProxyStatus() {
       if (response.ok) {
         setStatus(data)
         setLastTest(new Date())
+        setConfigured(!data.message || data.message !== "Proxy not configured")
       } else {
         setStatus({
           success: false,
@@ -60,15 +63,37 @@ export function ProxyStatus() {
   }, [])
 
   const getStatusIcon = () => {
+    if (!configured) return <AlertTriangle className="h-5 w-5 text-amber-500" />
     if (!status) return <WifiOff className="h-5 w-5 text-gray-500" />
     if (status.success) return <Wifi className="h-5 w-5 text-green-500" />
     return <WifiOff className="h-5 w-5 text-red-500" />
   }
 
   const getStatusBadge = () => {
+    if (!configured) return <Badge variant="outline">No configurado</Badge>
     if (!status) return <Badge variant="secondary">Unknown</Badge>
     if (status.success) return <Badge variant="default">Connected</Badge>
     return <Badge variant="destructive">Failed</Badge>
+  }
+
+  if (!configured) {
+    return (
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            Bright Data Proxy
+            <Badge variant="outline">No configurado</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-amber-500">
+            <AlertTriangle className="h-5 w-5" />
+            <p>El proxy no está configurado. Agregue las variables de entorno necesarias.</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
@@ -82,7 +107,7 @@ export function ProxyStatus() {
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {status && (
+          {status && status.tests && (
             <>
               <div className="grid grid-cols-1 gap-3">
                 <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
@@ -110,7 +135,7 @@ export function ProxyStatus() {
                 </div>
               </div>
 
-              {status.proxyInfo.host && (
+              {status.proxyInfo && status.proxyInfo.host && (
                 <div className="text-xs text-muted-foreground">
                   <p>
                     Host: {status.proxyInfo.host}:{status.proxyInfo.port}
@@ -120,7 +145,7 @@ export function ProxyStatus() {
                 </div>
               )}
 
-              {status.recommendations.length > 0 && (
+              {status.recommendations && status.recommendations.length > 0 && (
                 <div className="space-y-1">
                   <p className="text-sm font-medium">Recommendations:</p>
                   {status.recommendations.map((rec, index) => (

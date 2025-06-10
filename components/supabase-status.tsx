@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Database, Activity, TrendingUp, Clock } from "lucide-react"
+import { Database, Activity, TrendingUp, Clock, AlertTriangle } from "lucide-react"
 
 interface ScrapingStats {
   totalJobs: number
@@ -20,6 +20,7 @@ export function SupabaseStatus() {
   const [stats, setStats] = useState<ScrapingStats | null>(null)
   const [status, setStatus] = useState<string>("unknown")
   const [loading, setLoading] = useState(false)
+  const [configured, setConfigured] = useState(true)
 
   const fetchStatus = async () => {
     setLoading(true)
@@ -30,6 +31,7 @@ export function SupabaseStatus() {
       if (response.ok) {
         setStats(data.stats)
         setStatus(data.status)
+        setConfigured(data.status !== "not_configured")
       }
     } catch (error) {
       console.error("Error fetching status:", error)
@@ -39,6 +41,7 @@ export function SupabaseStatus() {
   }
 
   useEffect(() => {
+    // Probar automáticamente al cargar
     fetchStatus()
     // Actualizar cada 30 segundos
     const interval = setInterval(fetchStatus, 30000)
@@ -54,6 +57,26 @@ export function SupabaseStatus() {
       default:
         return "bg-red-500"
     }
+  }
+
+  if (!configured) {
+    return (
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Sistema Supabase
+            <Badge variant="outline">No configurado</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-amber-500">
+            <AlertTriangle className="h-5 w-5" />
+            <p>Supabase no está configurado. Agregue las variables de entorno necesarias.</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
