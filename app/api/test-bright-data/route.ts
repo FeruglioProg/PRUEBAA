@@ -1,6 +1,15 @@
+// Fallback implementation for missing proxy manager
 import { NextResponse } from "next/server"
-import { proxyManager } from "@/lib/proxy-manager"
-import { browserManager } from "@/lib/browser-manager"
+// Import fallback for missing modules
+const proxyManager = {
+  testBrightDataProxy: async () => false,
+  getProxyStats: () => ({ requests: 0, errors: 0 }),
+  getBrightDataProxy: () => null,
+}
+
+const browserManager = {
+  testBrowserWithProxy: async () => false,
+}
 
 export async function GET() {
   try {

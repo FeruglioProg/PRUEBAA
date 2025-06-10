@@ -1,74 +1,99 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { supabaseAdmin } from "@/lib/supabase-simple"
+import { realTimeScraperSimple } from "@/lib/real-time-scraper-simple"
+import { saveSearchResults } from "@/lib/supabase-simple"
 
 export async function POST(request: NextRequest) {
   try {
-    const criteria = await request.json()
+    console.log("🔍 Starting simple property search...")
 
-    // Datos de ejemplo si Supabase falla
-    const fallbackProperties = [
-      {
-        id: "example-1",
-        title: "Departamento 2 ambientes en Palermo Hollywood",
-        link: "https://www.zonaprop.com.ar/ejemplo-1",
-        total_price: 180000,
-        surface: 65,
-        price_per_m2: 2769,
-        source: "Zonaprop",
-        neighborhood: "Palermo",
-        is_owner: true,
-        published_date: new Date().toISOString(),
-      },
-      {
-        id: "example-2",
-        title: "Monoambiente luminoso en Belgrano",
-        link: "https://www.argenprop.com/ejemplo-2",
-        total_price: 120000,
-        surface: 45,
-        price_per_m2: 2667,
-        source: "Argenprop",
-        neighborhood: "Belgrano",
-        is_owner: false,
-        published_date: new Date().toISOString(),
-      },
-      {
-        id: "example-3",
-        title: "Departamento de categoría en Recoleta",
-        link: "https://inmuebles.mercadolibre.com.ar/ejemplo-3",
-        total_price: 250000,
-        surface: 85,
-        price_per_m2: 2941,
-        source: "MercadoLibre",
-        neighborhood: "Recoleta",
-        is_owner: true,
-        published_date: new Date().toISOString(),
-      },
-    ]
+    const body = await request.json()
+    const { neighborhoods, maxPrice, maxPricePerSqm, minSurface, maxSurface, neighborhoodPrices } = body
 
-    try {
-      // Intentar obtener de Supabase
-      const { data: properties } = await supabaseAdmin.from("properties").select("*").limit(10)
+    console.log("Search parameters:", {
+      neighborhoods: neighborhoods?.length || 0,
+      maxPrice,
+      maxPricePerSqm,
+      minSurface,
+      maxSurface,
+      neighborhoodPrices: Object.keys(neighborhoodPrices || {}).length,
+    })
 
-      if (properties && properties.length > 0) {
-        return NextResponse.json({
-          properties,
-          count: properties.length,
-          source: "supabase",
-          timestamp: new Date().toISOString(),
-        })
-      }
-    } catch (supabaseError) {
-      console.log("Supabase not available, using fallback data")
+    // Validate required parameters
+    if (!neighborhoods || neighborhoods.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one neighborhood is required",
+          properties: [],
+        },
+        { status: 400 },
+      )
     }
 
-    // Usar datos de ejemplo
+    // Start scraping
+    const startTime = Date.now()
+    const results = await realTimeScraperSimple.scrapeProperties({
+      neighborhoods,
+      maxPrice,
+      maxPricePerSqm,
+      minSurface,
+      maxSurface,
+      neighborhoodPrices: neighborhoodPrices || {},
+    })
+
+    const endTime = Date.now()
+    const duration = endTime - startTime
+
+    console.log(`✅ Search completed in ${duration}ms`)
+    console.log(`📊 Found ${results.length} properties`)
+
+    // Save results to Supabase (optional)
+    try {
+      await saveSearchResults(body, results)
+    } catch (error) {
+      console.warn("Failed to save to Supabase:", error)
+      // Continue without failing the request
+    }
+
     return NextResponse.json({
-      properties: fallbackProperties,
-      count: fallbackProperties.length,
-      source: "fallback",
-      timestamp: new Date().toISOString(),
+      success: true,
+      properties: results,
+      metadata: {
+        searchTime: duration,
+        totalFound: results.length,
+        searchParams: {
+          neighborhoods: neighborhoods.length,
+          hasMaxPrice: !!maxPrice,
+          hasMaxPricePerSqm: !!maxPricePerSqm,
+          hasSurfaceFilters: !!(minSurface || maxSurface),
+          hasNeighborhoodPrices: Object.keys(neighborhoodPrices || {}).length > 0,
+        },
+      },
     })
   } catch (error) {
-    return NextResponse.json({ error: "Search failed", details: error.message }, { status: 500 })
+    console.error("❌ Search properties error:", error)
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message || "Internal server error",
+        properties: [],
+        metadata: {
+          searchTime: 0,
+          totalFound: 0,
+          errorDetails: process.env.NODE_ENV === "development" ? error.stack : undefined,
+        },
+      },
+      { status: 500 },
+    )
   }
+}
+
+export async function GET() {
+  return NextResponse.json({
+    message: "Property search API endpoint",
+    methods: ["POST"],
+    requiredParams: ["neighborhoods"],
+    optionalParams: ["maxPrice", "maxPricePerSqm", "minSurface", "maxSurface", "neighborhoodPrices"],
+  })
 }
