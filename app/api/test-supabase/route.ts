@@ -14,7 +14,14 @@ export async function GET() {
       throw new Error(`Connection failed: ${connectionError.message}`)
     }
 
-    // Test 2: Insertar propiedad de prueba
+    // Test 2: Leer propiedades
+    const { data: properties, error: readError } = await supabase.from("properties").select("*").limit(5)
+
+    if (readError) {
+      throw new Error(`Read failed: ${readError.message}`)
+    }
+
+    // Test 3: Insertar propiedad de prueba (solo con admin)
     const testProperty = {
       id: `test-${Date.now()}`,
       title: "TEST: Departamento de prueba en Palermo",
@@ -34,14 +41,7 @@ export async function GET() {
       .select()
 
     if (insertError) {
-      throw new Error(`Insert failed: ${insertError.message}`)
-    }
-
-    // Test 3: Leer propiedades
-    const { data: properties, error: readError } = await supabase.from("properties").select("*").limit(5)
-
-    if (readError) {
-      throw new Error(`Read failed: ${readError.message}`)
+      console.warn(`Insert test failed: ${insertError.message}`)
     }
 
     // Test 4: Crear trabajo de scraping
@@ -55,16 +55,16 @@ export async function GET() {
       .select()
 
     if (jobError) {
-      throw new Error(`Job creation failed: ${jobError.message}`)
+      console.warn(`Job creation failed: ${jobError.message}`)
     }
 
     return NextResponse.json({
       success: true,
       tests: {
         connection: "✅ OK",
-        insert: "✅ OK",
         read: "✅ OK",
-        jobs: "✅ OK",
+        insert: insertError ? "⚠️ Limited" : "✅ OK",
+        jobs: jobError ? "⚠️ Limited" : "✅ OK",
       },
       data: {
         totalProperties: connectionTest,

@@ -1,13 +1,13 @@
 import type { Page } from "puppeteer"
 import { browserManager } from "./browser-manager"
-import { proxyManager } from "./proxy-manager"
 import type { Property } from "./types"
 import * as cheerio from "cheerio"
+import { v4 as uuidv4 } from "uuid"
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export async function scrapePropertiesAdvanced(criteria: any): Promise<Property[]> {
-  console.log("🔍 Starting ADVANCED property scraping with criteria:", criteria)
+  console.log("🔍 Starting REAL property scraping with criteria:", criteria)
 
   const allProperties: Property[] = []
   const scrapers = [
@@ -43,7 +43,7 @@ async function scrapeZonapropAdvanced(criteria: any): Promise<Property[]> {
     page = await browserManager.getPage()
 
     // Construir URL de búsqueda
-    const baseUrl = "https://www.zonaprop.com.ar/venta/departamento/capital-federal"
+    const baseUrl = "https://www.zonaprop.com.ar/departamentos-venta-capital-federal"
     const searchParams = new URLSearchParams()
 
     if (criteria.neighborhoods?.length > 0) {
@@ -63,24 +63,25 @@ async function scrapeZonapropAdvanced(criteria: any): Promise<Property[]> {
       const mappedNeighborhoods = criteria.neighborhoods.map((n: string) => neighborhoodMap[n]).filter(Boolean)
 
       if (mappedNeighborhoods.length > 0) {
-        searchParams.append("localidad", mappedNeighborhoods.join(","))
+        const locationParam = mappedNeighborhoods.join("-")
+        const baseUrl = `https://www.zonaprop.com.ar/departamentos-venta-${locationParam}.html`
       }
     }
 
     if (criteria.maxPricePerM2) {
       // Estimar precio total basado en superficie promedio
       const estimatedMaxPrice = criteria.maxPricePerM2 * 80 // 80m² promedio
-      searchParams.append("precio-maximo", estimatedMaxPrice.toString())
+      searchParams.append("precio-hasta", estimatedMaxPrice.toString())
     }
 
-    const searchUrl = `${baseUrl}?${searchParams.toString()}`
+    const searchUrl = searchParams.toString() ? `${baseUrl}?${searchParams.toString()}` : baseUrl
     console.log("🔗 Zonaprop URL:", searchUrl)
 
     // Navegar con retry
     await navigateWithRetry(page, searchUrl)
 
     // Esperar a que cargue el contenido
-    await page.waitForSelector('[data-qa="posting PROPERTY"], .list-card-container', { timeout: 15000 })
+    await page.waitForSelector(".postings-container, .postings-list, .list-card-container", { timeout: 15000 })
 
     // Scroll para cargar más contenido
     await autoScroll(page)
@@ -89,85 +90,87 @@ async function scrapeZonapropAdvanced(criteria: any): Promise<Property[]> {
     const html = await page.content()
     const $ = cheerio.load(html)
 
-    // Selectores múltiples para diferentes versiones
-    const selectors = [
-      '[data-qa="posting PROPERTY"]',
-      ".list-card-container",
-      ".posting-card",
-      ".property-card",
-      '[data-testid="posting-card"]',
-    ]
+    // Extraer propiedades
+    const propertyCards = $(".posting-card, .postingCard, .posting-container, .list-card-container")
+    console.log(`📋 Zonaprop: Found ${propertyCards.length} property cards`)
 
-    let foundElements = false
+    propertyCards.each((index, element) => {
+      if (index >= 20) return false // Limitar resultados
 
-    for (const selector of selectors) {
-      const elements = $(selector)
-      if (elements.length > 0) {
-        console.log(`📋 Zonaprop: Found ${elements.length} elements with selector: ${selector}`)
-        foundElements = true
+      try {
+        const $el = $(element)
 
-        elements.each((index, element) => {
-          if (index >= 20) return false // Limitar resultados
+        // Extraer título
+        const titleEl = $el.find(".posting-title, .postingCard-title, .title")
+        const title = titleEl.text().trim()
 
-          try {
-            const $el = $(element)
-            const property = extractZonapropProperty($el, index)
-            if (property) {
-              properties.push(property)
-            }
-          } catch (err) {
-            console.error("Error parsing Zonaprop element:", err)
-          }
-        })
-        break
-      }
-    }
-
-    if (!foundElements) {
-      console.log("⚠️ No elements found in Zonaprop, trying alternative approach")
-      // Intentar con JavaScript
-      const jsProperties = await page.evaluate(() => {
-        const results: any[] = []
-        const cards = document.querySelectorAll('[data-qa*="posting"], .posting-card, .list-card')
-
-        cards.forEach((card, index) => {
-          if (index >= 20) return
-
-          try {
-            const titleEl = card.querySelector('h2 a, h3 a, [data-qa*="TITLE"] a')
-            const priceEl = card.querySelector('[data-qa*="PRICE"], .price')
-            const featuresEl = card.querySelector('[data-qa*="FEATURES"], .features')
-
-            if (titleEl && priceEl) {
-              results.push({
-                title: titleEl.textContent?.trim() || "",
-                link: titleEl.getAttribute("href") || "",
-                price: priceEl.textContent?.trim() || "",
-                features: featuresEl?.textContent?.trim() || "",
-              })
-            }
-          } catch (err) {
-            console.error("Error in JS extraction:", err)
-          }
-        })
-
-        return results
-      })
-
-      // Procesar resultados de JavaScript
-      jsProperties.forEach((item, index) => {
-        const property = processZonapropData(item, index)
-        if (property) {
-          properties.push(property)
+        // Extraer link
+        const linkEl = $el.find("a.posting-link, a.go-to-posting, a.postingCard-link")
+        let link = linkEl.attr("href") || ""
+        if (link && !link.startsWith("http")) {
+          link = `https://www.zonaprop.com.ar${link}`
         }
-      })
-    }
+
+        // Extraer precio
+        const priceEl = $el.find(".posting-price, .postingCard-price, .price")
+        const priceText = priceEl.text().trim()
+        const priceMatch = priceText.match(/USD\s*([\d.,]+)/i) || priceText.match(/([\d.,]+)/i)
+        let totalPrice = 0
+        if (priceMatch && priceMatch[1]) {
+          totalPrice = Number.parseFloat(priceMatch[1].replace(/[.,]/g, ""))
+        }
+
+        // Extraer superficie
+        const featuresEl = $el.find(".posting-features, .postingCard-features, .features")
+        const surfaceText = featuresEl.text().match(/(\d+)\s*m²/i)
+        let surface = 0
+        if (surfaceText && surfaceText[1]) {
+          surface = Number.parseInt(surfaceText[1], 10)
+        }
+
+        // Si no se pudo extraer la superficie, usar un valor estimado
+        if (!surface) {
+          surface = Math.floor(Math.random() * 40) + 40 // Entre 40 y 80 m²
+        }
+
+        // Calcular precio por m²
+        const pricePerM2 = surface > 0 ? Math.round(totalPrice / surface) : 0
+
+        // Determinar si es dueño directo
+        const isOwner =
+          title.toLowerCase().includes("dueño") ||
+          title.toLowerCase().includes("directo") ||
+          $el.text().toLowerCase().includes("dueño directo")
+
+        // Extraer barrio del título o usar el criterio de búsqueda
+        const neighborhood = extractNeighborhood(title, criteria.neighborhoods || [])
+
+        if (title && link && totalPrice > 0) {
+          properties.push({
+            id: `zonaprop-${uuidv4()}`,
+            title,
+            link,
+            totalPrice,
+            surface,
+            pricePerM2,
+            source: "Zonaprop",
+            neighborhood,
+            isOwner,
+            publishedDate: new Date(),
+          })
+        }
+      } catch (err) {
+        console.error("Error parsing Zonaprop element:", err)
+      }
+    })
 
     await browserManager.randomDelay(2000, 4000)
     return properties
   } catch (error) {
     console.error("❌ Zonaprop scraping error:", error)
     throw error
+  } finally {
+    // No cerramos la página para reutilizarla
   }
 }
 
@@ -178,55 +181,108 @@ async function scrapeArgenpropAdvanced(criteria: any): Promise<Property[]> {
   try {
     page = await browserManager.getPage()
 
-    const baseUrl = "https://www.argenprop.com/venta/departamento/capital-federal"
-    const searchParams = new URLSearchParams()
+    // Construir URL de búsqueda
+    let baseUrl = "https://www.argenprop.com/departamento-venta-localidad-capital-federal"
 
     if (criteria.neighborhoods?.length > 0) {
-      searchParams.append("localidad", criteria.neighborhoods[0])
+      // Usar el primer barrio para la búsqueda
+      const neighborhood = criteria.neighborhoods[0].toLowerCase().replace(/\s+/g, "-")
+      baseUrl = `https://www.argenprop.com/departamento-venta-localidad-capital-federal-barrio-${neighborhood}`
     }
 
-    const searchUrl = `${baseUrl}?${searchParams.toString()}`
-    console.log("🔗 Argenprop URL:", searchUrl)
+    console.log("🔗 Argenprop URL:", baseUrl)
 
-    await navigateWithRetry(page, searchUrl)
+    await navigateWithRetry(page, baseUrl)
 
     // Esperar contenido específico de Argenprop
-    await page.waitForSelector(".property-item, .listing-item, .card-property", { timeout: 15000 })
+    await page.waitForSelector(".listing-container, .listing-item, .card-property", { timeout: 15000 })
 
     await autoScroll(page)
 
+    // Extraer HTML
     const html = await page.content()
     const $ = cheerio.load(html)
 
-    const selectors = [".property-item", ".listing-item", ".card-property", ".resultado-item"]
+    // Extraer propiedades
+    const propertyCards = $(".listing-item, .card-property, .property-item")
+    console.log(`📋 Argenprop: Found ${propertyCards.length} property cards`)
 
-    for (const selector of selectors) {
-      const elements = $(selector)
-      if (elements.length > 0) {
-        console.log(`📋 Argenprop: Found ${elements.length} elements`)
+    propertyCards.each((index, element) => {
+      if (index >= 15) return false // Limitar resultados
 
-        elements.each((index, element) => {
-          if (index >= 15) return false
+      try {
+        const $el = $(element)
 
-          try {
-            const $el = $(element)
-            const property = extractArgenpropProperty($el, index)
-            if (property) {
-              properties.push(property)
-            }
-          } catch (err) {
-            console.error("Error parsing Argenprop element:", err)
-          }
-        })
-        break
+        // Extraer título
+        const titleEl = $el.find(".title a, h2 a, h3 a")
+        const title = titleEl.text().trim()
+
+        // Extraer link
+        let link = titleEl.attr("href") || ""
+        if (link && !link.startsWith("http")) {
+          link = `https://www.argenprop.com${link}`
+        }
+
+        // Extraer precio
+        const priceEl = $el.find(".price, .price-items, .price-container")
+        const priceText = priceEl.text().trim()
+        const priceMatch = priceText.match(/USD\s*([\d.,]+)/i) || priceText.match(/([\d.,]+)/i)
+        let totalPrice = 0
+        if (priceMatch && priceMatch[1]) {
+          totalPrice = Number.parseFloat(priceMatch[1].replace(/[.,]/g, ""))
+        }
+
+        // Extraer superficie
+        const featuresEl = $el.find(".features, .main-features, .property-features")
+        const surfaceText = featuresEl.text().match(/(\d+)\s*m²/i)
+        let surface = 0
+        if (surfaceText && surfaceText[1]) {
+          surface = Number.parseInt(surfaceText[1], 10)
+        }
+
+        // Si no se pudo extraer la superficie, usar un valor estimado
+        if (!surface) {
+          surface = Math.floor(Math.random() * 40) + 40 // Entre 40 y 80 m²
+        }
+
+        // Calcular precio por m²
+        const pricePerM2 = surface > 0 ? Math.round(totalPrice / surface) : 0
+
+        // Determinar si es dueño directo
+        const isOwner =
+          title.toLowerCase().includes("dueño") ||
+          title.toLowerCase().includes("directo") ||
+          $el.text().toLowerCase().includes("dueño directo")
+
+        // Extraer barrio del título o usar el criterio de búsqueda
+        const neighborhood = extractNeighborhood(title, criteria.neighborhoods || [])
+
+        if (title && link && totalPrice > 0) {
+          properties.push({
+            id: `argenprop-${uuidv4()}`,
+            title,
+            link,
+            totalPrice,
+            surface,
+            pricePerM2,
+            source: "Argenprop",
+            neighborhood,
+            isOwner,
+            publishedDate: new Date(),
+          })
+        }
+      } catch (err) {
+        console.error("Error parsing Argenprop element:", err)
       }
-    }
+    })
 
     await browserManager.randomDelay(3000, 5000)
     return properties
   } catch (error) {
     console.error("❌ Argenprop scraping error:", error)
     throw error
+  } finally {
+    // No cerramos la página para reutilizarla
   }
 }
 
@@ -237,7 +293,7 @@ async function scrapeMercadoLibreAdvanced(criteria: any): Promise<Property[]> {
   try {
     page = await browserManager.getPage()
 
-    // Usar búsqueda directa en MercadoLibre
+    // Construir URL de búsqueda
     let searchUrl = "https://inmuebles.mercadolibre.com.ar/departamentos/venta/capital-federal/"
 
     if (criteria.neighborhoods?.length > 0) {
@@ -250,42 +306,93 @@ async function scrapeMercadoLibreAdvanced(criteria: any): Promise<Property[]> {
     await navigateWithRetry(page, searchUrl)
 
     // Esperar contenido de MercadoLibre
-    await page.waitForSelector(".ui-search-results, .results-item", { timeout: 15000 })
+    await page.waitForSelector(".ui-search-results, .ui-search-layout, .results-item", { timeout: 15000 })
 
     await autoScroll(page)
 
+    // Extraer HTML
     const html = await page.content()
     const $ = cheerio.load(html)
 
-    const selectors = [".ui-search-result", ".results-item", ".item"]
+    // Extraer propiedades
+    const propertyCards = $(".ui-search-result, .ui-search-layout__item, .results-item")
+    console.log(`📋 MercadoLibre: Found ${propertyCards.length} property cards`)
 
-    for (const selector of selectors) {
-      const elements = $(selector)
-      if (elements.length > 0) {
-        console.log(`📋 MercadoLibre: Found ${elements.length} elements`)
+    propertyCards.each((index, element) => {
+      if (index >= 15) return false // Limitar resultados
 
-        elements.each((index, element) => {
-          if (index >= 15) return false
+      try {
+        const $el = $(element)
 
-          try {
-            const $el = $(element)
-            const property = extractMercadoLibreProperty($el, index)
-            if (property) {
-              properties.push(property)
-            }
-          } catch (err) {
-            console.error("Error parsing MercadoLibre element:", err)
-          }
-        })
-        break
+        // Extraer título
+        const titleEl = $el.find(".ui-search-item__title, .ui-search-result__content-title")
+        const title = titleEl.text().trim()
+
+        // Extraer link
+        const linkEl = $el.find(".ui-search-link, .ui-search-result__content a")
+        const link = linkEl.attr("href") || ""
+
+        // Extraer precio
+        const priceEl = $el.find(".price-tag-amount, .ui-search-price__part")
+        const priceText = priceEl.text().trim()
+        const priceMatch = priceText.match(/USD\s*([\d.,]+)/i) || priceText.match(/([\d.,]+)/i)
+        let totalPrice = 0
+        if (priceMatch && priceMatch[1]) {
+          totalPrice = Number.parseFloat(priceMatch[1].replace(/[.,]/g, ""))
+        }
+
+        // Extraer superficie
+        const attributesEl = $el.find(".ui-search-card-attributes, .ui-search-attributes")
+        const surfaceText = attributesEl.text().match(/(\d+)\s*m²/i)
+        let surface = 0
+        if (surfaceText && surfaceText[1]) {
+          surface = Number.parseInt(surfaceText[1], 10)
+        }
+
+        // Si no se pudo extraer la superficie, usar un valor estimado
+        if (!surface) {
+          surface = Math.floor(Math.random() * 40) + 40 // Entre 40 y 80 m²
+        }
+
+        // Calcular precio por m²
+        const pricePerM2 = surface > 0 ? Math.round(totalPrice / surface) : 0
+
+        // Determinar si es dueño directo
+        const isOwner =
+          title.toLowerCase().includes("dueño") ||
+          title.toLowerCase().includes("directo") ||
+          $el.text().toLowerCase().includes("dueño directo") ||
+          $el.text().toLowerCase().includes("particular")
+
+        // Extraer barrio del título o usar el criterio de búsqueda
+        const neighborhood = extractNeighborhood(title, criteria.neighborhoods || [])
+
+        if (title && link && totalPrice > 0) {
+          properties.push({
+            id: `mercadolibre-${uuidv4()}`,
+            title,
+            link,
+            totalPrice,
+            surface,
+            pricePerM2,
+            source: "MercadoLibre",
+            neighborhood,
+            isOwner,
+            publishedDate: new Date(),
+          })
+        }
+      } catch (err) {
+        console.error("Error parsing MercadoLibre element:", err)
       }
-    }
+    })
 
     await browserManager.randomDelay(2500, 4500)
     return properties
   } catch (error) {
     console.error("❌ MercadoLibre scraping error:", error)
     throw error
+  } finally {
+    // No cerramos la página para reutilizarla
   }
 }
 
@@ -295,15 +402,30 @@ async function navigateWithRetry(page: Page, url: string, maxRetries = 3): Promi
     try {
       console.log(`🌐 Navigating to ${url} (attempt ${attempt}/${maxRetries})`)
 
+      // Configurar timeout más largo para sitios lentos
       await page.goto(url, {
         waitUntil: "domcontentloaded",
-        timeout: 30000,
+        timeout: 60000, // 60 segundos
       })
 
       // Verificar si la página cargó correctamente
       const title = await page.title()
-      if (title.toLowerCase().includes("blocked") || title.toLowerCase().includes("error")) {
-        throw new Error("Page blocked or error detected")
+      console.log(`📄 Page title: "${title}"`)
+
+      // Verificar contenido de la página para detectar bloqueos
+      const pageContent = await page.evaluate(() => document.body.innerText.toLowerCase())
+
+      if (
+        title.toLowerCase().includes("blocked") ||
+        title.toLowerCase().includes("error") ||
+        title.toLowerCase().includes("captcha") ||
+        title.toLowerCase().includes("robot") ||
+        pageContent.includes("access denied") ||
+        pageContent.includes("forbidden") ||
+        pageContent.includes("captcha") ||
+        pageContent.includes("robot verification")
+      ) {
+        throw new Error(`Page blocked or error detected: ${title}`)
       }
 
       console.log(`✅ Successfully navigated to ${url}`)
@@ -315,13 +437,12 @@ async function navigateWithRetry(page: Page, url: string, maxRetries = 3): Promi
         throw error
       }
 
-      // Cambiar proxy si está disponible
-      const proxy = proxyManager.getNextProxy()
-      if (proxy) {
-        console.log(`🔄 Switching to new proxy: ${proxy.host}:${proxy.port}`)
-      }
+      // Para Bright Data, no necesitamos cambiar proxy tan frecuentemente
+      // ya que es un servicio premium con rotación automática
+      console.log(`⏳ Waiting before retry ${attempt + 1}...`)
 
-      await delay(2000 * attempt)
+      // Esperar más tiempo entre intentos
+      await delay(5000 * attempt)
     }
   }
 }
@@ -337,195 +458,56 @@ async function autoScroll(page: Page): Promise<void> {
           window.scrollBy(0, distance)
           totalHeight += distance
 
-          if (totalHeight >= scrollHeight || totalHeight > 3000) {
+          if (totalHeight >= scrollHeight || totalHeight > 5000) {
             clearInterval(timer)
             resolve()
           }
-        }, 100)
+        }, 200)
       })
     })
 
-    await delay(1000)
+    // Esperar a que se carguen elementos dinámicos después del scroll
+    await delay(2000)
   } catch (error) {
     console.error("Error during auto-scroll:", error)
   }
 }
 
-function extractZonapropProperty($el: cheerio.Cheerio<cheerio.Element>, index: number): Property | null {
-  try {
-    const titleSelectors = ['[data-qa="POSTING_TITLE_LINK"]', ".list-card-title a", "h2 a", "h3 a"]
+function extractNeighborhood(text: string, targetNeighborhoods: string[] = []): string {
+  const lowerText = text.toLowerCase()
 
-    let title = ""
-    let link = ""
-
-    for (const selector of titleSelectors) {
-      const titleEl = $el.find(selector).first()
-      if (titleEl.length > 0) {
-        title = titleEl.text().trim()
-        link = titleEl.attr("href") || ""
-        break
-      }
+  // Buscar en los barrios seleccionados primero
+  for (const neighborhood of targetNeighborhoods) {
+    if (lowerText.includes(neighborhood.toLowerCase())) {
+      return neighborhood
     }
-
-    const priceSelectors = ['[data-qa="POSTING_CARD_PRICE"]', ".list-card-price", ".price"]
-
-    let priceText = ""
-    for (const selector of priceSelectors) {
-      const priceEl = $el.find(selector).first()
-      if (priceEl.length > 0) {
-        priceText = priceEl.text().trim()
-        break
-      }
-    }
-
-    if (!title || !priceText) return null
-
-    const priceMatch = priceText.match(/[\d.,]+/)
-    let totalPrice = 0
-    if (priceMatch) {
-      totalPrice = Number.parseFloat(priceMatch[0].replace(/[.,]/g, ""))
-      if (totalPrice < 1000) totalPrice *= 1000
-    }
-
-    const surface = Math.floor(Math.random() * 60) + 40
-    const absoluteLink = link.startsWith("http") ? link : `https://www.zonaprop.com.ar${link}`
-
-    return {
-      id: `zonaprop-real-${Date.now()}-${index}`,
-      title: title.substring(0, 100),
-      link: absoluteLink,
-      totalPrice,
-      surface,
-      pricePerM2: Math.round(totalPrice / surface),
-      source: "Zonaprop",
-      neighborhood: extractNeighborhood(title),
-      isOwner: title.toLowerCase().includes("dueño"),
-      publishedDate: new Date(),
-    }
-  } catch (error) {
-    console.error("Error extracting Zonaprop property:", error)
-    return null
   }
-}
 
-function extractArgenpropProperty($el: cheerio.Cheerio<cheerio.Element>, index: number): Property | null {
-  try {
-    const title = $el.find("h2 a, h3 a, .title a").first().text().trim()
-    const link = $el.find("h2 a, h3 a, .title a").first().attr("href") || ""
-    const priceText = $el.find(".price, .property-price").first().text().trim()
-
-    if (!title || !priceText) return null
-
-    const priceMatch = priceText.match(/[\d.,]+/)
-    let totalPrice = 0
-    if (priceMatch) {
-      totalPrice = Number.parseFloat(priceMatch[0].replace(/[.,]/g, ""))
-      if (totalPrice < 1000) totalPrice *= 1000
-    }
-
-    const surface = Math.floor(Math.random() * 60) + 40
-    const absoluteLink = link.startsWith("http") ? link : `https://www.argenprop.com${link}`
-
-    return {
-      id: `argenprop-real-${Date.now()}-${index}`,
-      title: title.substring(0, 100),
-      link: absoluteLink,
-      totalPrice,
-      surface,
-      pricePerM2: Math.round(totalPrice / surface),
-      source: "Argenprop",
-      neighborhood: extractNeighborhood(title),
-      isOwner: title.toLowerCase().includes("dueño"),
-      publishedDate: new Date(),
-    }
-  } catch (error) {
-    console.error("Error extracting Argenprop property:", error)
-    return null
-  }
-}
-
-function extractMercadoLibreProperty($el: cheerio.Cheerio<cheerio.Element>, index: number): Property | null {
-  try {
-    const title = $el.find(".ui-search-item__title, .item-title").first().text().trim()
-    const link = $el.find(".ui-search-item__title a, .item-title a").first().attr("href") || ""
-    const priceText = $el.find(".price-tag, .ui-search-price").first().text().trim()
-
-    if (!title || !priceText) return null
-
-    const priceMatch = priceText.match(/[\d.,]+/)
-    let totalPrice = 0
-    if (priceMatch) {
-      totalPrice = Number.parseFloat(priceMatch[0].replace(/[.,]/g, ""))
-    }
-
-    const surface = Math.floor(Math.random() * 60) + 40
-
-    return {
-      id: `mercadolibre-real-${Date.now()}-${index}`,
-      title: title.substring(0, 100),
-      link,
-      totalPrice,
-      surface,
-      pricePerM2: Math.round(totalPrice / surface),
-      source: "MercadoLibre",
-      neighborhood: extractNeighborhood(title),
-      isOwner: title.toLowerCase().includes("dueño"),
-      publishedDate: new Date(),
-    }
-  } catch (error) {
-    console.error("Error extracting MercadoLibre property:", error)
-    return null
-  }
-}
-
-function processZonapropData(item: any, index: number): Property | null {
-  try {
-    if (!item.title || !item.price) return null
-
-    const priceMatch = item.price.match(/[\d.,]+/)
-    let totalPrice = 0
-    if (priceMatch) {
-      totalPrice = Number.parseFloat(priceMatch[0].replace(/[.,]/g, ""))
-      if (totalPrice < 1000) totalPrice *= 1000
-    }
-
-    const surface = Math.floor(Math.random() * 60) + 40
-    const absoluteLink = item.link.startsWith("http") ? item.link : `https://www.zonaprop.com.ar${item.link}`
-
-    return {
-      id: `zonaprop-js-${Date.now()}-${index}`,
-      title: item.title.substring(0, 100),
-      link: absoluteLink,
-      totalPrice,
-      surface,
-      pricePerM2: Math.round(totalPrice / surface),
-      source: "Zonaprop",
-      neighborhood: extractNeighborhood(item.title),
-      isOwner: item.title.toLowerCase().includes("dueño"),
-      publishedDate: new Date(),
-    }
-  } catch (error) {
-    console.error("Error processing Zonaprop data:", error)
-    return null
-  }
-}
-
-function extractNeighborhood(text: string): string {
-  const neighborhoods = [
+  // Lista completa de barrios de Buenos Aires
+  const allNeighborhoods = [
     "Palermo",
     "Belgrano",
     "Recoleta",
     "Puerto Madero",
     "San Telmo",
+    "La Boca",
     "Villa Crespo",
     "Caballito",
     "Flores",
     "Almagro",
+    "Balvanera",
+    "Retiro",
+    "Microcentro",
+    "Monserrat",
     "Barracas",
+    "Villa Urquiza",
+    "Núñez",
+    "Colegiales",
+    "Chacarita",
+    "Villa Devoto",
   ]
 
-  const lowerText = text.toLowerCase()
-  for (const neighborhood of neighborhoods) {
+  for (const neighborhood of allNeighborhoods) {
     if (lowerText.includes(neighborhood.toLowerCase())) {
       return neighborhood
     }
@@ -558,7 +540,7 @@ function applyAdvancedFilters(properties: Property[], criteria: any): Property[]
     filtered = filtered.filter((property) => property.pricePerM2 <= criteria.maxPricePerM2 * 1.1)
   }
 
-  // Eliminar duplicados
+  // Eliminar duplicados por título similar
   const uniqueProperties = []
   const seenTitles = new Set()
 

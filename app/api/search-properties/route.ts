@@ -1,59 +1,36 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { scrapePropertiesWithSupabase, getPropertiesFromSupabase } from "@/lib/scraper-supabase"
+import { scrapePropertiesSimplified } from "@/lib/simplified-scraper"
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("API: Received search request")
-
     const criteria = await request.json()
-    console.log("API: Parsed criteria:", criteria)
 
-    // Validate required fields
+    // Validar criterios básicos
     if (!criteria.neighborhoods || criteria.neighborhoods.length === 0) {
-      console.log("API: No neighborhoods selected")
-      return NextResponse.json({ error: "At least one neighborhood must be selected" }, { status: 400 })
+      return NextResponse.json({ error: "Selecciona al menos un barrio" }, { status: 400 })
     }
 
-    if (!criteria.timeRange) {
-      console.log("API: No time range selected")
-      return NextResponse.json({ error: "Time range is required" }, { status: 400 })
-    }
+    console.log("🔍 Starting property search with criteria:", criteria)
 
-    console.log("API: Starting property search with Supabase...")
-
-    // Primero intentar obtener propiedades existentes
-    let properties = await getPropertiesFromSupabase(criteria)
-
-    // Si no hay suficientes propiedades, hacer scraping
-    if (properties.length < 5) {
-      console.log("API: Not enough existing properties, starting scraping...")
-      const scrapedProperties = await scrapePropertiesWithSupabase(criteria)
-
-      // Combinar resultados existentes con nuevos
-      const allPropertyIds = new Set(properties.map((p) => p.id))
-      const newProperties = scrapedProperties.filter((p) => !allPropertyIds.has(p.id))
-      properties = [...properties, ...newProperties]
-    }
-
-    console.log(`API: Found ${properties.length} properties`)
+    // Usar el scraper simplificado que no depende de Redis ni métricas
+    const properties = await scrapePropertiesSimplified(criteria)
 
     return NextResponse.json({
+      success: true,
       properties,
       count: properties.length,
       criteria,
+      scrapingMethod: properties.length > 0 ? "success" : "fallback",
       timestamp: new Date().toISOString(),
-      source: "supabase",
     })
   } catch (error) {
-    console.error("API: Search error:", error)
-
+    console.error("Error en búsqueda:", error)
     return NextResponse.json(
       {
-        error: "Failed to search properties",
-        details: error instanceof Error ? error.message : "Unknown error",
+        success: false,
+        error: "Error al buscar propiedades",
         properties: [],
         count: 0,
-        timestamp: new Date().toISOString(),
       },
       { status: 500 },
     )

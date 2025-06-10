@@ -5,30 +5,30 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { SupabaseStatus } from "./supabase-status"
-import { SetupWizard } from "./setup-wizard"
 
 interface DebugPanelProps {
-  onTestScraping: (criteria: any) => void
+  onTestScraping: () => void
 }
 
 export function DebugPanel({ onTestScraping }: DebugPanelProps) {
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
-  const testQuickSearch = async () => {
+  const testSupabaseConnection = async () => {
     setLoading(true)
     try {
-      // Ejecutar búsqueda de prueba
-      const testCriteria = {
-        neighborhoods: ["Palermo", "Belgrano"],
-        timeRange: "7d",
-        ownerOnly: false,
-        email: "test@gmail.com",
-        scheduleTime: "09:00",
-      }
+      const response = await fetch("/api/search-properties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          neighborhoods: ["Palermo", "Belgrano"],
+          timeRange: "7d",
+          ownerOnly: false,
+        }),
+      })
 
-      onTestScraping(testCriteria)
-      setDebugInfo({ message: "Búsqueda de prueba ejecutada", criteria: testCriteria })
+      const data = await response.json()
+      setDebugInfo(data)
     } catch (error) {
       setDebugInfo({ error: error.message })
     } finally {
@@ -38,9 +38,7 @@ export function DebugPanel({ onTestScraping }: DebugPanelProps) {
 
   return (
     <div className="space-y-4">
-      <SetupWizard />
-
-      <Card>
+      <Card className="mt-4">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             🐛 Panel de Debug
@@ -49,8 +47,8 @@ export function DebugPanel({ onTestScraping }: DebugPanelProps) {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <Button onClick={testQuickSearch} variant="outline" className="w-full" disabled={loading}>
-              {loading ? "Probando..." : "🚀 Búsqueda Rápida de Prueba"}
+            <Button onClick={testSupabaseConnection} variant="outline" className="w-full" disabled={loading}>
+              {loading ? "Probando..." : "🧪 Probar Conexión Supabase"}
             </Button>
 
             {debugInfo && (

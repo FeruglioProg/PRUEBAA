@@ -7,7 +7,7 @@
 3. Crea una cuenta o inicia sesión
 4. Haz clic en "New Project"
 5. Elige tu organización
-6. Configura el proyecto:
+6. Configura el proyecto: 
    - **Name**: property-finder-argentina
    - **Database Password**: Crea una contraseña segura
    - **Region**: South America (São Paulo) - más cercano a Argentina
